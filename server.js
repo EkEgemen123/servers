@@ -1,103 +1,75 @@
-// server.js
 const express = require('express');
 const http = require('http');
-const { Server } = require("socket.io"); // Socket.io v4+ kullanımı
+const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
 
-// --- CORS AYARI VE SOCKET.IO BAŞLATMA ---
+// CORS Ayarları: Her yerden bağlantıya izin verir (Netlify için en güvenli yol)
 const io = new Server(server, {
   cors: {
-    // Kendi Netlify adresini buraya ekle (Hata almamak için sondaki '/' işaretini koyma)
-    origin: ["https://magical-croquembouche-fcef3d.netlify.app", "http://localhost:3000"], 
-    methods: ["GET", "POST"],
-    credentials: true
+    origin: "*", 
+    methods: ["GET", "POST"]
   }
 });
 
-app.use(express.static('public'));
-
 const rooms = {};
 
-// Başlangıç dizilişi (Görseldeki gibi hassas ayarlandı)
-const initialBoard = Array(24).fill(0);
-initialBoard[0] = 2;  // 2 beyaz pul
-initialBoard[5] = -5; // 5 siyah pul
-initialBoard[7] = -3; // 3 siyah pul
-initialBoard[11] = 5; // 5 beyaz pul
-initialBoard[12] = -5; // 5 siyah pul
-initialBoard[16] = 3; // 3 beyaz pul
-initialBoard[18] = 5; // 5 beyaz pul
-initialBoard[23] = -2; // 2 siyah pul
+// GÖRSELDEKİ (image_c3585c.png) STANDART DİZİLİŞ
+// 0-23 arası indeksler (1-24 kapıları)
+const getInitialBoard = () => {
+    let board = Array(24).fill(0);
+    board[0] = 2;   // Kapı 1: 2 Beyaz
+    board[5] = -5;  // Kapı 6: 5 Siyah
+    board[7] = -3;  // Kapı 8: 3 Siyah
+    board[11] = 5;  // Kapı 12: 5 Beyaz
+    board[12] = -5; // Kapı 13: 5 Siyah
+    board[16] = 3;  // Kapı 17: 3 Beyaz
+    board[18] = 5;  // Kapı 19: 5 Beyaz
+    board[23] = -2; // Kapı 24: 2 Siyah
+    return board;
+};
 
 io.on('connection', (socket) => {
-  console.log('Bağlantı başarılı: ', socket.id);
+  console.log('Oyuncu bağlandı:', socket.id);
 
-  // Oda oluşturma
-  socket.on('createRoom', (roomName) => {
+  // ODA OLUŞTURMA / KATILMA (Tek bir sistemde birleştirildi)
+  socket.on('joinRoom', (roomName) => {
+    socket.join(roomName);
+    
     if (!rooms[roomName]) {
       rooms[roomName] = {
         players: [socket.id],
-        board: [...initialBoard],
+        board: getInitialBoard(),
         turn: 'white'
       };
-      socket.join(roomName);
       socket.emit('roomCreated', roomName);
-      console.log(`Oda oluşturuldu: ${roomName}`);
     } else {
-      socket.emit('error', 'Bu oda adı zaten kullanılıyor.');
-    }
-  });
-
-  // Odaya katılma
-  socket.on('joinRoom', (roomName) => {
-    if (rooms[roomName] && rooms[roomName].players.length < 2) {
-      rooms[roomName].players.push(socket.id);
-      socket.join(roomName);
-      socket.emit('roomJoined', roomName);
-      
-      console.log(`${socket.id} odaya katıldı: ${roomName}`);
-
-      if (rooms[roomName].players.length === 2) {
+      if (rooms[roomName].players.length < 2) {
+        rooms[roomName].players.push(socket.id);
+        socket.emit('roomJoined', roomName);
+        
+        // İki kişi gelince oyunu başlat
         io.to(roomName).emit('gameStart', {
           board: rooms[roomName].board,
           turn: rooms[roomName].turn
         });
+      } else {
+        socket.emit('error', 'Oda dolu!');
       }
-    } else {
-      socket.emit('error', 'Oda dolu veya mevcut değil.');
     }
   });
 
-  // Zar Atma Senkronizasyonu
-  socket.on('diceRoll', (data) => {
-    // Gelen zar bilgisini odadaki diğer oyuncuya da gönder
-    io.to(data.room).emit('diceResult', {
-      d1: data.d1,
-      d2: data.d2
-    });
+  // ZAR ATMA SENKRONİZASYONU
+  socket.on('diceRolled', (data) => {
+    // Odadaki HERKESE (atan dahil) zarı gönder
+    io.to(data.room).emit('updateDice', data.dice);
   });
 
-  // Bağlantı kesilmesi
   socket.on('disconnect', () => {
-    for (const roomName in rooms) {
-      const index = rooms[roomName].players.indexOf(socket.id);
-      if (index !== -1) {
-        rooms[roomName].players.splice(index, 1);
-        io.to(roomName).emit('playerLeft');
-        if (rooms[roomName].players.length === 0) {
-          delete rooms[roomName];
-          console.log(`Oda silindi: ${roomName}`);
-        }
-        break;
-      }
-    }
+    console.log('Ayrıldı:', socket.id);
   });
 });
 
-// Render.com için port ayarı
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Efsanevi Tavla Sunucusu ${PORT} portunda aktif!`);
-});
+server.listen(PORT, () => console.log(`Sunucu ${PORT} üzerinde devrede!`));
