@@ -1,19 +1,28 @@
 // server.js
 const express = require('express');
 const http = require('http');
-const socketIo = require('socket.io');
+const { Server } = require("socket.io"); // Socket.io v4+ kullanımı
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
+
+// --- CORS AYARI VE SOCKET.IO BAŞLATMA ---
+const io = new Server(server, {
+  cors: {
+    // Kendi Netlify adresini buraya ekle (Hata almamak için sondaki '/' işaretini koyma)
+    origin: ["https://magical-croquembouche-fcef3d.netlify.app", "http://localhost:3000"], 
+    methods: ["GET", "POST"],
+    credentials: true
+  }
+});
 
 app.use(express.static('public'));
 
 const rooms = {};
 
-// Başlangıç dizilişini tanımla (görüntüdeki gibi)
+// Başlangıç dizilişi (Görseldeki gibi hassas ayarlandı)
 const initialBoard = Array(24).fill(0);
-initialBoard[0] = 2;  // 2 beyaz pul (beyazlar pozitif, siyahlar negatif)
+initialBoard[0] = 2;  // 2 beyaz pul
 initialBoard[5] = -5; // 5 siyah pul
 initialBoard[7] = -3; // 3 siyah pul
 initialBoard[11] = 5; // 5 beyaz pul
@@ -23,15 +32,15 @@ initialBoard[18] = 5; // 5 beyaz pul
 initialBoard[23] = -2; // 2 siyah pul
 
 io.on('connection', (socket) => {
-  console.log('Bir kullanıcı bağlandı:', socket.id);
+  console.log('Bağlantı başarılı: ', socket.id);
 
   // Oda oluşturma
   socket.on('createRoom', (roomName) => {
     if (!rooms[roomName]) {
       rooms[roomName] = {
         players: [socket.id],
-        board: [...initialBoard], // Tahtanın bir kopyasını al
-        turn: 'white' // İlk sıra beyazın
+        board: [...initialBoard],
+        turn: 'white'
       };
       socket.join(roomName);
       socket.emit('roomCreated', roomName);
@@ -47,10 +56,9 @@ io.on('connection', (socket) => {
       rooms[roomName].players.push(socket.id);
       socket.join(roomName);
       socket.emit('roomJoined', roomName);
-      io.to(roomName).emit('playerJoined', rooms[roomName].players.length);
+      
       console.log(`${socket.id} odaya katıldı: ${roomName}`);
 
-      // İki oyuncu da katıldıysa oyunu başlat
       if (rooms[roomName].players.length === 2) {
         io.to(roomName).emit('gameStart', {
           board: rooms[roomName].board,
@@ -62,15 +70,22 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Zar Atma Senkronizasyonu
+  socket.on('diceRoll', (data) => {
+    // Gelen zar bilgisini odadaki diğer oyuncuya da gönder
+    io.to(data.room).emit('diceResult', {
+      d1: data.d1,
+      d2: data.d2
+    });
+  });
+
   // Bağlantı kesilmesi
   socket.on('disconnect', () => {
-    console.log('Kullanıcı ayrıldı:', socket.id);
     for (const roomName in rooms) {
       const index = rooms[roomName].players.indexOf(socket.id);
       if (index !== -1) {
         rooms[roomName].players.splice(index, 1);
         io.to(roomName).emit('playerLeft');
-        // Eğer odada kimse kalmadıysa odayı sil
         if (rooms[roomName].players.length === 0) {
           delete rooms[roomName];
           console.log(`Oda silindi: ${roomName}`);
@@ -81,7 +96,8 @@ io.on('connection', (socket) => {
   });
 });
 
+// Render.com için port ayarı
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Sunucu ${PORT} portunda çalışıyor`);
+  console.log(`Efsanevi Tavla Sunucusu ${PORT} portunda aktif!`);
 });
